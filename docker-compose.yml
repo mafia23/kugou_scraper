@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: lyrics
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    depends_on:
+      - mysql
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "18002:5000"
+    depends_on:
+      - mysql
+
+volumes:
+  mysql_data:
