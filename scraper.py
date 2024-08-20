@@ -1,10 +1,7 @@
 import os
-import re
 import asyncio
 import aiohttp
-import pymysql
-import requests
-from flask import Flask, send_file, abort, request
+import sqlite3
 from pyquery import PyQuery as pq
 from selenium import webdriver
 from selenium.common import TimeoutException
@@ -23,19 +20,25 @@ chrome_options.add_argument('--no-sandbox')
 def init_browser():
     return webdriver.Chrome(options=chrome_options)
 
-db = pymysql.connect(
-    host="localhost",
-    user="root",
-    password="root",
-    port=3306,
-    database='lyrics',
-    charset='utf8'
-)
+# SQLite 数据库设置
+db = sqlite3.connect('lyrics.db')
 cursor = db.cursor()
 table = 'web_singer'
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36'
 }
+
+# 如果表不存在则创建
+cursor.execute(f'''
+CREATE TABLE IF NOT EXISTS {table} (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    singername TEXT UNIQUE,
+    singerjieshao TEXT,
+    img_url TEXT,
+    singerImages TEXT
+)
+''')
+db.commit()
 
 async def fetch(session, url):
     async with session.get(url, headers=headers) as response:
@@ -46,20 +49,20 @@ async def fetch(session, url):
         except (UnicodeDecodeError, TypeError):
             return response_bytes.decode('utf-8', errors='replace')
 
-
 async def parse_page(session, browser, page_number, category_number):
     url = f'http://www.kugou.com/yy/singer/index/{page_number}-all-{category_number}.html'
     browser.get(url)
 
     try:
-        wait = WebDriverWait(browser, 5)  # 增加等待时间至 20 秒
+        wait = WebDriverWait(browser, 10)  # 增加等待时间至 10 秒
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.r ul li a')))
     except TimeoutException:
-        print(f"TimeoutException: Elements not found on page {url}")
+        print(f"超时异常: 在页面 {url} 上未找到元素")
         return []  # 返回一个空列表，防止后续处理失败
 
     data_list = []
-    html = browser.page_source  # 直接使用 Selenium 获取页面源代码
+    html = browser.page_source
+    print(browser.title)
     doc = pq(html)
 
     for i in doc.remove('.pic').find('.r ul li a').items():
@@ -78,77 +81,68 @@ async def parse_page(session, browser, page_number, category_number):
             'img_url': img_url,
             'singerImages': ''
         }
-        print('data', data)
+        print('数据', data)
+
+
         data_list.append(data)
 
     return data_list
 
+def is_singer_in_db():
+    cursor.execute(f'SELECT COUNT(*) FROM {table}')
+    count = cursor.fetchone()[0]
+    return count > 0
 
 async def main():
-    if not os.path.exists('img'):
-        os.mkdir('img')
-    os.chdir('img')
+    if not is_singer_in_db():
+        all_data = []
+        start_page = 1
+        end_page = 5
+        start_category = 2
+        end_category = 11
 
-    all_data = []
-    start_page = 1
-    end_page = 5
-    start_category = 2
-    end_category = 11
+        browser = init_browser()
 
-    browser = init_browser()
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for category_number in range(start_category, end_category + 1):
+                for page_number in range(start_page, end_page + 1):
+                    tasks.append(parse_page(session, browser, page_number, category_number))
+            results = await asyncio.gather(*tasks)
+            for result in results:
+                all_data.extend(result)
 
-    async with aiohttp.ClientSession() as session:
-        tasks = []
-        for category_number in range(start_category, end_category + 1):
-            for page_number in range(start_page, end_page + 1):
-                tasks.append(parse_page(session, browser, page_number, category_number))
-        results = await asyncio.gather(*tasks)
-        for result in results:
-            all_data.extend(result)
+        browser.quit()
+        savedata(all_data)
+    else:
+        print("数据库中已经有数据，跳过数据抓取。")
 
-    browser.quit()
-    savedata(all_data)
-
-def download_image(url):
-    file_path = None
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            file_name = re.search(r'(\d+).jpg$', url)
-            if file_name:
-                file_path = file_name.group(1) + '.jpg'
-                if not os.path.exists(file_path):
-                    with open(file_path, 'wb') as f:
-                        f.write(response.content)
-                else:
-                    print('Already downloaded!!!')
-        return file_path
-    except requests.ConnectionError:
-        print("Downloading failed!!!")
-
-def savetoMysql(data):
-    keys = ','.join(data.keys())
-    values = ','.join(['%s'] * len(data))
+def savetoSQLite(data):
+    keys = ', '.join(data.keys())
+    values = ', '.join(['?'] * len(data))
     sql = f'INSERT INTO {table}({keys}) VALUES ({values})'
     try:
-        if cursor.execute(sql, tuple(data.values())):
-            db.commit()
-            print('Data inserted successfully')
-    except pymysql.MySQLError as e:
-        print('MySQL Error:', e)
+        cursor.execute(sql, tuple(data.values()))
+        db.commit()
+        print('数据插入成功')
+    except sqlite3.IntegrityError:
+        # 处理已经存在的数据
+        print(f'跳过已经存在的数据: {data["singername"]}')
+    except sqlite3.Error as e:
+        print('SQLite 错误:', e)
         db.rollback()
     except Exception as e:
-        print('General Error:', e)
+        print('一般错误:', e)
         db.rollback()
 
 def savedata(data_list):
-    with ThreadPoolExecutor() as executor:
-        for data in data_list:
-            filepath = download_image(data.get('img_url'))
-            if filepath:
-                data['singerImages'] = filepath
-                executor.submit(savetoMysql, data)
+    for data in data_list:
+        savetoSQLite(data)
 
 if __name__ == '__main__':
-    asyncio.run(main())
-    db.close()
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"运行时发生错误: {e}")
+    finally:
+        db.close()
