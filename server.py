@@ -1,21 +1,18 @@
 from flask import Flask, send_file, abort, request
-import pymysql
+import sqlite3
 import os
+import requests
 
 # Flask app setup
 app = Flask(__name__)
 
-# Database connection setup
-db = pymysql.connect(
-    host="localhost",
-    user="root",
-    password="root",
-    port=3306,
-    database='lyrics',
-    charset='utf8'
-)
-cursor = db.cursor()
-table = 'web_singer'
+# SQLite database setup
+db_path = 'lyrics.db'
+
+
+def get_db_connection():
+    return sqlite3.connect(db_path)
+
 
 @app.route('/covers', methods=['GET'])
 def get_cover():
@@ -23,18 +20,34 @@ def get_cover():
     if not artist:
         abort(400, description="Artist parameter is required")
 
-    query = "SELECT singerImages FROM {} WHERE singername = %s".format(table)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = "SELECT img_url FROM web_singer WHERE singername = ?"
     cursor.execute(query, (artist,))
     result = cursor.fetchone()
+    conn.close()
 
     if result and result[0]:
-        file_path = "img/"+result[0]
-        if os.path.exists(file_path):
-            return send_file(file_path, mimetype='image/jpeg')
+        img_url = result[0]
+        if img_url:
+            try:
+                response = requests.get(img_url, stream=True)
+                if response.status_code == 200:
+                    return send_file(
+                        response.raw,
+                        mimetype=response.headers.get('Content-Type', 'image/jpeg'),
+                        as_attachment=False
+                    )
+                else:
+                    abort(404, description="Image not found at the provided URL")
+            except Exception as e:
+                abort(500, description=f"Error fetching image: {str(e)}")
         else:
-            abort(404, description="Image file not found")
+            abort(404, description="No image URL found for the given artist")
     else:
         abort(404, description="No image found for the given artist")
+
 
 if __name__ == '__main__':
     # Run Flask app
