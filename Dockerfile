@@ -1,45 +1,21 @@
-# Use the official Python image from the Docker Hub
+# 使用官方 Python 运行时作为基础镜像
 FROM python:3.9-slim
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-
-# Set the working directory
+# 设置工作目录
 WORKDIR /app
 
-# Copy the requirements file and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 将当前目录的内容复制到工作目录中
+COPY . /app
 
-# Install necessary system packages for Selenium
-RUN apt-get update -q && \
-    apt-get install -y -q \
-    wget \
-    gnupg \
-    software-properties-common \
-    unzip && \
-    rm -rf /var/lib/apt/lists/*
+# 安装 Python 依赖
+RUN pip install --no-cache-dir aiohttp pyquery selenium chardet flask requests
 
-# Add the official Google Chrome PPA
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list' && \
-    apt-get update -q && \
-    apt-get install -y -q google-chrome-stable && \
-    CHROME_DRIVER_VERSION=$(wget -q -O - https://chromedriver.storage.googleapis.com/LATEST_RELEASE) && \
-    wget -q "https://chromedriver.storage.googleapis.com/${CHROME_DRIVER_VERSION}/chromedriver_linux64.zip" && \
-    unzip chromedriver_linux64.zip && \
-    mv chromedriver /usr/local/bin/chromedriver && \
-    chmod +x /usr/local/bin/chromedriver
+# 设置环境变量，以防止 Python 缓存生成
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Set environment variables for Chrome
-ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_BIN=/usr/local/bin/chromedriver
-
-# Expose the Flask application port
+# 暴露 Flask 服务器的端口
 EXPOSE 5000
 
-# Copy the application code
-COPY scraper.py server.py /app/
-
-# Default command
-CMD ["python", "server.py"]
+# 运行主 Python 脚本
+CMD ["python", "main.py"]

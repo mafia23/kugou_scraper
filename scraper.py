@@ -1,4 +1,3 @@
-import os
 import asyncio
 import aiohttp
 import sqlite3
@@ -11,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 import chardet
 import logging
+import os
 
 # 设置日志记录
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,8 +27,9 @@ chrome_options.add_argument('--no-sandbox')
 def init_browser():
     return webdriver.Chrome(options=chrome_options)
 
-# SQLite 数据库设置
-db_path = 'lyrics.db'
+# 获取当前脚本文件所在目录，并在该目录下创建数据库文件路径
+script_dir = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(script_dir, 'lyrics.db')
 
 def create_table_if_not_exists():
     with sqlite3.connect(db_path) as db:
@@ -72,23 +73,25 @@ async def parse_page(session, browser, page_number, category_number):
     for i in doc.remove('.pic').find('.r ul li a').items():
         href = i.attr('href')
         logging.info(f"获取详细信息 {href}")
-        detail_html = await fetch(session, href)
-        detail_doc = pq(detail_html)
+        try:
+            detail_html = await fetch(session, href)
+            detail_doc = pq(detail_html)
 
-        title = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > div > div > strong').text()
-        description = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > div > p').text()
-        img_url = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > img').attr('_src')
+            title = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > div > div > strong').text()
+            description = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > div > p').text()
+            img_url = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > img').attr('_src')
 
-        data = {
-            'singername': title,
-            'singerjieshao': description,
-            'img_url': img_url,
-            'singerImages': ''
-        }
-        logging.info(f"提取的数据: {data}")
+            data = {
+                'singername': title,
+                'singerjieshao': description,
+                'img_url': img_url,
+                'singerImages': ''
+            }
+            logging.info(f"提取的数据: {data}")
 
-        data_list.append(data)
-
+            data_list.append(data)
+        except Exception as e:
+         logging.error(f"获取详细信息时出错 {href}: {e}")
     return data_list
 
 def is_singer_in_db():
@@ -114,12 +117,12 @@ async def main():
             tasks = []
             for category_number in range(start_category, end_category + 1):
                 for page_number in range(start_page, end_page + 1):
-                    tasks.append(parse_page(session, browser, page_number, category_number))
+                    tasks.append(asyncio.create_task(parse_page(session, browser, page_number, category_number)))
             results = await asyncio.gather(*tasks)
             for result in results:
                 all_data.extend(result)
 
-        browser.quit()
+        browser.quit() # 确保浏览器在所有任务完成后被正确关闭
         savedata(all_data)
     else:
         logging.info("数据库中已经有数据，跳过数据抓取。")
@@ -147,6 +150,6 @@ def savedata(data_list):
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        asyncio.run(main()) # 使用 asyncio.run() 确保事件循环正确关闭
     except Exception as e:
         logging.error(f"运行时发生错误: {e}")

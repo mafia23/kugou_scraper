@@ -1,7 +1,0 @@
-Flask
-pymysql
-requests
-aiohttp
-pyquery
-selenium
-chardet
