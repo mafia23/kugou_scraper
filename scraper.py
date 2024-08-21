@@ -1,5 +1,4 @@
-import asyncio
-import aiohttp
+import requests
 import sqlite3
 from pyquery import PyQuery as pq
 from selenium import webdriver
@@ -45,16 +44,21 @@ def create_table_if_not_exists():
         ''')
         db.commit()
 
-async def fetch(session, url):
-    async with session.get(url, headers=headers) as response:
-        response_bytes = await response.read()
+def fetch(url):
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # 如果请求失败，抛出异常
+        response_bytes = response.content
         detected_encoding = chardet.detect(response_bytes)['encoding']
         try:
             return response_bytes.decode(detected_encoding)
         except (UnicodeDecodeError, TypeError):
             return response_bytes.decode('utf-8', errors='replace')
+    except requests.RequestException as e:
+        logging.error(f"请求失败: {url} - {e}")
+        return ""
 
-async def parse_page(session, browser, page_number, category_number):
+def parse_page(browser, page_number, category_number):
     url = f'http://www.kugou.com/yy/singer/index/{page_number}-all-{category_number}.html'
     browser.get(url)
 
@@ -74,7 +78,7 @@ async def parse_page(session, browser, page_number, category_number):
         href = i.attr('href')
         logging.info(f"获取详细信息 {href}")
         try:
-            detail_html = await fetch(session, href)
+            detail_html = fetch(href)
             detail_doc = pq(detail_html)
 
             title = detail_doc('body > div.wrap.clear_fix > div.sng_ins_1 > div.top > div > div > strong').text()
@@ -91,7 +95,7 @@ async def parse_page(session, browser, page_number, category_number):
 
             data_list.append(data)
         except Exception as e:
-         logging.error(f"获取详细信息时出错 {href}: {e}")
+            logging.error(f"获取详细信息时出错 {href}: {e}")
     return data_list
 
 def is_singer_in_db():
@@ -101,7 +105,7 @@ def is_singer_in_db():
         count = cursor.fetchone()[0]
     return count > 0
 
-async def main():
+def main():
     create_table_if_not_exists()
 
     if not is_singer_in_db():
@@ -113,16 +117,12 @@ async def main():
 
         browser = init_browser()
 
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for category_number in range(start_category, end_category + 1):
-                for page_number in range(start_page, end_page + 1):
-                    tasks.append(asyncio.create_task(parse_page(session, browser, page_number, category_number)))
-            results = await asyncio.gather(*tasks)
-            for result in results:
+        for category_number in range(start_category, end_category + 1):
+            for page_number in range(start_page, end_page + 1):
+                result = parse_page(browser, page_number, category_number)
                 all_data.extend(result)
 
-        browser.quit() # 确保浏览器在所有任务完成后被正确关闭
+        browser.quit()  # 确保浏览器在所有任务完成后被正确关闭
         savedata(all_data)
     else:
         logging.info("数据库中已经有数据，跳过数据抓取。")
@@ -150,6 +150,6 @@ def savedata(data_list):
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main()) # 使用 asyncio.run() 确保事件循环正确关闭
+        main()  # 使用同步函数执行
     except Exception as e:
         logging.error(f"运行时发生错误: {e}")
