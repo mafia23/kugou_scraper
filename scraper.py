@@ -9,9 +9,16 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from concurrent.futures import ThreadPoolExecutor
 import chardet
+import logging
 
+# 设置日志记录
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# 定义 HTTP 请求头
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36'
+}
 chrome_options = Options()
 chrome_options.add_argument('--headless')
 chrome_options.add_argument('--disable-gpu')
@@ -21,24 +28,21 @@ def init_browser():
     return webdriver.Chrome(options=chrome_options)
 
 # SQLite 数据库设置
-db = sqlite3.connect('lyrics.db')
-cursor = db.cursor()
-table = 'web_singer'
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36'
-}
+db_path = 'lyrics.db'
 
-# 如果表不存在则创建
-cursor.execute(f'''
-CREATE TABLE IF NOT EXISTS {table} (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    singername TEXT UNIQUE,
-    singerjieshao TEXT,
-    img_url TEXT,
-    singerImages TEXT
-)
-''')
-db.commit()
+def create_table_if_not_exists():
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS web_singer (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            singername TEXT UNIQUE,
+            singerjieshao TEXT,
+            img_url TEXT,
+            singerImages TEXT
+        )
+        ''')
+        db.commit()
 
 async def fetch(session, url):
     async with session.get(url, headers=headers) as response:
@@ -57,17 +61,17 @@ async def parse_page(session, browser, page_number, category_number):
         wait = WebDriverWait(browser, 10)  # 增加等待时间至 10 秒
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.r ul li a')))
     except TimeoutException:
-        print(f"超时异常: 在页面 {url} 上未找到元素")
+        logging.error(f"超时异常: 在页面 {url} 上未找到元素")
         return []  # 返回一个空列表，防止后续处理失败
 
     data_list = []
     html = browser.page_source
-    print(browser.title)
+    logging.info(f"解析页面 {url}")
     doc = pq(html)
 
     for i in doc.remove('.pic').find('.r ul li a').items():
         href = i.attr('href')
-        print(href)
+        logging.info(f"获取详细信息 {href}")
         detail_html = await fetch(session, href)
         detail_doc = pq(detail_html)
 
@@ -81,19 +85,22 @@ async def parse_page(session, browser, page_number, category_number):
             'img_url': img_url,
             'singerImages': ''
         }
-        print('数据', data)
-
+        logging.info(f"提取的数据: {data}")
 
         data_list.append(data)
 
     return data_list
 
 def is_singer_in_db():
-    cursor.execute(f'SELECT COUNT(*) FROM {table}')
-    count = cursor.fetchone()[0]
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute('SELECT COUNT(*) FROM web_singer')
+        count = cursor.fetchone()[0]
     return count > 0
 
 async def main():
+    create_table_if_not_exists()
+
     if not is_singer_in_db():
         all_data = []
         start_page = 1
@@ -115,25 +122,24 @@ async def main():
         browser.quit()
         savedata(all_data)
     else:
-        print("数据库中已经有数据，跳过数据抓取。")
+        logging.info("数据库中已经有数据，跳过数据抓取。")
 
 def savetoSQLite(data):
     keys = ', '.join(data.keys())
     values = ', '.join(['?'] * len(data))
-    sql = f'INSERT INTO {table}({keys}) VALUES ({values})'
+    sql = f'INSERT INTO web_singer({keys}) VALUES ({values})'
     try:
-        cursor.execute(sql, tuple(data.values()))
-        db.commit()
-        print('数据插入成功')
+        with sqlite3.connect(db_path) as db:
+            cursor = db.cursor()
+            cursor.execute(sql, tuple(data.values()))
+            db.commit()
+        logging.info('数据插入成功')
     except sqlite3.IntegrityError:
-        # 处理已经存在的数据
-        print(f'跳过已经存在的数据: {data["singername"]}')
+        logging.warning(f'跳过已经存在的数据: {data["singername"]}')
     except sqlite3.Error as e:
-        print('SQLite 错误:', e)
-        db.rollback()
+        logging.error(f'SQLite 错误: {e}')
     except Exception as e:
-        print('一般错误:', e)
-        db.rollback()
+        logging.error(f'一般错误: {e}')
 
 def savedata(data_list):
     for data in data_list:
@@ -143,6 +149,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except Exception as e:
-        print(f"运行时发生错误: {e}")
-    finally:
-        db.close()
+        logging.error(f"运行时发生错误: {e}")
