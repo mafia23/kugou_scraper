@@ -1,12 +1,14 @@
 import requests
 import sqlite3
 from pyquery import PyQuery as pq
-from selenium import webdriver
 from selenium.common import TimeoutException
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 import chardet
 import logging
 import os
@@ -14,17 +16,20 @@ import os
 # 设置日志记录
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+service = Service(executable_path=ChromeDriverManager().install())
 # 定义 HTTP 请求头
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36'
-}
-chrome_options = Options()
-chrome_options.add_argument('--headless')
-chrome_options.add_argument('--disable-gpu')
-chrome_options.add_argument('--no-sandbox')
+options = webdriver.ChromeOptions()
+options.add_argument("--headless")
+options.add_argument("--disable-gpu")
+options.add_argument("--disable-extensions")
+options.add_argument("--disable-infobars")
+options.add_argument("--start-maximized")
+options.add_argument("--disable-notifications")
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
 
 def init_browser():
-    return webdriver.Chrome(options=chrome_options)
+    return webdriver.Chrome(service=service, options=options)
 
 # 获取当前脚本文件所在目录，并在该目录下创建数据库文件路径
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +50,9 @@ def create_table_if_not_exists():
         db.commit()
 
 def fetch(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.90 Safari/537.36"
+    }
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()  # 如果请求失败，抛出异常

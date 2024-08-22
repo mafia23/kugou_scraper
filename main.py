@@ -3,8 +3,6 @@ import logging
 from flask import Flask, send_file, abort, request
 import sqlite3
 import requests
-
-# 导入scraper中的功能
 from scraper import main as scrape_data, create_table_if_not_exists
 
 # Flask app setup
@@ -13,10 +11,8 @@ app = Flask(__name__)
 # SQLite database setup
 db_path = 'lyrics.db'
 
-
 def get_db_connection():
     return sqlite3.connect(db_path)
-
 
 @app.route('/covers', methods=['GET'])
 def get_cover():
@@ -52,12 +48,14 @@ def get_cover():
     else:
         abort(404, description="No image found for the given artist")
 
-
-if __name__ == '__main__':
+def run_scrape_data():
     try:
-        # 运行数据抓取任务
         asyncio.run(scrape_data())
-        # 运行Flask服务器
-        app.run(host='0.0.0.0', port=5000, debug=True)
     except Exception as e:
         logging.error(f"运行时发生错误: {e}")
+
+if __name__ == '__main__':
+    # 运行数据抓取任务
+    run_scrape_data()
+    # 运行Flask服务器
+    app.run(host='0.0.0.0', port=5000, debug=True)
